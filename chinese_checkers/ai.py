@@ -216,6 +216,7 @@ class SmartAI:
         score = 0.0
 
         # --- Per-piece scores ---
+        piece_set = set(pieces)
         row_progresses = []
         for pos in pieces:
             (r, c) = pos
@@ -248,28 +249,42 @@ class SmartAI:
                         urgency = 1.0 + math.exp(in_goal_count - 6)
                         score -= min_hdist * urgency
 
-        # 5. Straggler penalty: the LAST piece carrying the team back is brutal
+                # 7. Forward jump mobility: reward being in a position to jump forward
+                for (dr, dc) in Board.DIRECTIONS:
+                    is_forward = (goal == 'S' and dr >= 0) or (goal == 'N' and dr <= 0)
+                    if not is_forward:
+                        continue
+                    (mr, mc) = (r + dr, c + dc)
+                    (lr, lc) = (r + 2 * dr, c + 2 * dc)
+                    if ((mr, mc) in board.all_positions
+                            and board.grid.get((mr, mc)) is not None
+                            and (lr, lc) in board.all_positions
+                            and board.grid.get((lr, lc)) is None):
+                        score += 12.0
+
+        # 5. Straggler penalty: only punish pieces that lag behind the average
         if row_progresses:
             min_prog = min(row_progresses)
-            max_prog = max(row_progresses)
-            spread = max_prog - min_prog
+            avg_prog = sum(row_progresses) / len(row_progresses)
 
             # Penalty grows strongly as the game progresses (more in_goal = endgame)
             straggler_weight = 10.0 + in_goal_count * 4.0
             score -= (16 - min_prog) * straggler_weight
 
-            # Spread penalty: tight cluster >> scattered
-            score -= (spread ** 1.4) * 5.0
+            # Lag penalty: only penalise pieces more than 4 rows behind average.
+            # Leaders running ahead are NOT penalised, encouraging big jumps.
+            lag = max(0.0, avg_prog - min_prog - 4.0)
+            score -= lag * 10.0
 
         # 6. Formation / chain-jump bridge bonus
-        piece_set = set(pieces)
+        # Weight kept low to avoid AI clustering pieces instead of making big jumps
         bridge_score = 0
         for pos in pieces:
             (r, c) = pos
             for (dr, dc) in Board.DIRECTIONS:
                 if (r + dr, c + dc) in piece_set:
                     bridge_score += 1
-        score += bridge_score * 4.0
+        score += bridge_score * 3.0
 
         return (score, False)
 
@@ -317,9 +332,13 @@ class SmartAI:
 
         score = row_adv * 15
 
-        # Prefer larger jumps (chain-jump potential)
+        # Strongly prefer larger jumps (chain-jump potential)
         jump_size = max(abs(to_pos[0] - from_pos[0]), abs(to_pos[1] - from_pos[1]))
-        score += jump_size * 3
+        score += jump_size * 14
+
+        # Extra bonus for actual multi-step jumps (row advance >= 2)
+        if abs(to_pos[0] - from_pos[0]) >= 2:
+            score += 35
 
         # Centrality
         score -= abs(to_pos[1] - 12) * 0.5
